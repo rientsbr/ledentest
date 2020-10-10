@@ -1,7 +1,7 @@
 ![Docker](https://github.com/djoamersfoort/LedenAdministratie/workflows/Docker/badge.svg)
 
-# DJO LedenAdministratie
-Dit is de source voor de DJO Ledenadminstratie. Geschreven in Python/Django. Features:
+# Scouting St Ansfridus LedenAdministratie
+Dit is de source voor de Ledenadminstratie. Geschreven in Python/Django. Features:
 
 ## Features
 - Leden informatie opslaan en bewerken, inclusief een foto en auto-generated thumbnail
@@ -79,7 +79,7 @@ Je krijgt dan 1 json hash terug met de details van die user:
 ## Docker
 Van dit project wordt automatisch een docker container gebouwd. Deze is hier te vinden:
 
-https://github.com/djoamersfoort/LedenAdministratie/packages
+https://github.com/ansfridus/LedenAdministratie/packages
 
 Om de image te downloaden kun je dit doen:
 docker pull docker.pkg.github.com/djoamersfoort/ledenadministratie/ledenadministratie:latest
