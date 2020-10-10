@@ -1,4 +1,4 @@
-from django.contrib.auth import logout, login as auth_login
+from django.contrib.auth import logout, login as auth_login, authenticate
 from django.contrib.auth.models import User
 from django.views.generic.edit import CreateView, UpdateView, DeleteView, FormView, BaseDetailView, View
 from django.views.generic.list import ListView
@@ -23,15 +23,21 @@ from .mixins import PermissionRequiredMixin
 from .utils import Utils
 
 
-class LoginView(View):
-    def get(self, request, *args, **kwargs):
-        oauth = OAuth2Session(client_id=settings.IDP_CLIENT_ID,
-                              redirect_uri=settings.IDP_REDIRECT_URL,
-                              scope=['user/basic', 'user/account-type', 'user/names', 'user/email'])
-        auth_url, state = oauth.authorization_url(settings.IDP_AUTHORIZE_URL)
-        return HttpResponseRedirect(auth_url)
+class LoginView(FormView):
+    form_class = forms.LoginForm
+    template_name = 'login.html'
 
+    def form_valid(self, form):
+        username = form.cleaned_data['username']
+        password = form.cleaned_data['password']
+        user = authenticate(username=username, password=password)
+        if user and user.is_active:
+            auth_login(self.request, user)
+            return HttpResponseRedirect(reverse('members'))
+        else:
+            return HttpResponseRedirect(reverse('login'))
 
+# Dit is nog een oude view die nu nieet gebruikt word door ansfridus
 class LoginResponseView(View):
     def get(self, request, *args, **kwargs):
         oauth = OAuth2Session(client_id=settings.IDP_CLIENT_ID,
@@ -78,8 +84,29 @@ class LogoffView(PermissionRequiredMixin, View):
 
     def get(self, request, *args, **kwargs):
         logout(request)
-        return HttpResponse(content='Uitgelogd')
+        return HttpResponseRedirect('/')
 
+
+class LidAanmeldView(CreateView):
+    model = Member
+    form_class = forms.MemberForm
+    template_name = 'aanmelden_lid.html'
+    success_url = reverse_lazy('aanmelden_ok')
+
+    def form_valid(self, form):
+        # Send an e-mail to 'bestuur'
+        subject = 'Nieuwe aanmelding St. Ansfridus ontvangen'
+        body = render_to_string('aanmelden_email.html', context={'member': form.instance})
+        send_mail(subject=subject, message=body, from_email=settings.EMAIL_SENDER,
+                  recipient_list=settings.EMAIL_RECIPIENTS_NEW)
+
+        # Send a confirmation e-mail to the user
+        subject = 'Bevestiging aanmelding St. Ansfridus'
+        body = render_to_string('aanmelden_email_user.html', context={'member': form.instance})
+        send_mail(subject=subject, message=body, from_email=settings.EMAIL_SENDER,
+                  recipient_list=[form.instance.email_address])
+
+        return super(LidAanmeldView, self).form_valid(form)
 
 class MemberListView(PermissionRequiredMixin, ListView):
     template_name = 'memberlist.html'
@@ -122,7 +149,7 @@ class MemberUpdateView(PermissionRequiredMixin, UpdateView):
 class MemberCreateView(PermissionRequiredMixin, CreateView):
     model = Member
     template_name = 'edit_member.html'
-    success_url = reverse_lazy('members')
+#    success_url = reverse_lazy('members')
     form_class = forms.MemberForm
     extra_context = {'types': MemberType.objects.all()}
     required_permission = 'LedenAdministratie.add_member'
@@ -132,23 +159,25 @@ class MemberCreateView(PermissionRequiredMixin, CreateView):
         redirect = super().form_valid(form)
 
         # Send 'welcome' e-mail to new member + parents
-        recipients = form.cleaned_data['email_ouders'].split(',')
+        recipients = form.cleaned_data['email_ouder1'].split(',')
         recipients.append(form.cleaned_data['email_address'])
 
         message = EmailMessage()
         message.to = recipients
-        message.subject = "Welkom bij DJO Amersfoort!"
+        message.subject = "Welkom bij St Ansfridus Amersfoort!"
         message.from_email = settings.EMAIL_SENDER
         message.body = render_to_string('emails/welcome_email.html', context={'member': form.instance})
         message.content_subtype = 'html'
 
-        response = requests.get(Utils.get_setting('welcome_pdf_location'))
-        if response.ok:
-            message.attach('Welkom bij DJO Amersfoort.pdf', response.content)
-            Utils.send_email(message, self.request.user.first_name, form.instance)
+#        response = requests.get(Utils.get_setting('welcome_pdf_location'))
+#        if response.ok:
+#            message.attach('Welkom bij Ansfridus Amersfoort.pdf', response.content)
+#            Utils.send_email(message, self.request.user.first_name, form.instance)
 
         return redirect
 
+    def get_success_url(self):
+        return reverse('members')
 
 class MemberDeleteView(PermissionRequiredMixin, DeleteView):
     model = Member
@@ -176,7 +205,7 @@ class MemberAddNoteView(PermissionRequiredMixin, CreateView):
     def form_valid(self, form):
         member_id = self.kwargs['member_id']
         form.instance.member = Member.objects.get(pk=member_id)
-        form.instance.username = self.request.user.first_name
+        form.instance.username = self.request.user.username
         return super().form_valid(form)
 
 
@@ -268,7 +297,7 @@ class InvoiceCreateView(PermissionRequiredMixin, FormView):
             invoice.amount = InvoiceTool.calculate_grand_total(self.lines)
             invoice.amount_payed = 0.00
             invoice.created = timezone.now()
-            invoice.username = self.request.user.first_name
+            invoice.username = self.request.user.username
             invoice.save()
             invoice.pdf = InvoiceTool.render_invoice(member, self.lines, invoice.invoice_number,
                                                      form.cleaned_data['invoice_types'])
@@ -390,7 +419,7 @@ class ExportView(PermissionRequiredMixin, FormView):
         for member in members:
             writer.writerow([member.first_name, member.last_name, member.gebdat, member.age, member.geslacht,
                              member.email_address, member.straat, member.postcode, member.woonplaats, member.telnr,
-                             member.telnr_ouders, member.email_ouders])
+                             member.mobiel_ouder1, member.email_ouder1])
 
         return response
 
@@ -413,7 +442,7 @@ class EmailSendView(PermissionRequiredMixin, FormView):
             message.reply_to = [settings.EMAIL_LANPARTY]
         message.to = recipients
         message.subject = form.cleaned_data['subject']
-        message.body = form.cleaned_data['body']
+        message.body = '<html>' + form.cleaned_data['body'] + '</html>'
         message.content_subtype = 'html'
 
         if 'attachment' in form.files:
@@ -440,7 +469,7 @@ class EmailSendView(PermissionRequiredMixin, FormView):
                     to_list.append(recipient.email_address)
             else:
                 if 'parents' in form.cleaned_data['recipients']:
-                    for address in recipient.email_ouders.split(','):
+                    for address in recipient.email_ouder1.split(','):
                         to_list.append(address)
                 if 'members' in form.cleaned_data['recipients']:
                     to_list.append(recipient.email_address)
